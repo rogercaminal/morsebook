@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Morse Audiobook Player</title>
+  <script src="https://fkurz.net/ham/jscwlib/releases/jscwlib-0.3.0.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 1250px; }
+    textarea { width: 100%; height: 270px; font-family: ui-monospace, monospace; line-height: 1.35; }
+    input, select, button { margin: .25rem; padding: .4rem; }
+    .row { display: flex; flex-wrap: wrap; gap: .45rem; align-items: center; }
+    .card { border: 1px solid #ccc; border-radius: 9px; padding: 1rem; margin: 1rem 0; }
+    .muted { color: #666; }
+    #player { margin-top: 1rem; }
+    label { white-space: nowrap; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    pre { background: #f6f6f6; padding: .8rem; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>Morse Audiobook Player</h1>
+
+  <div class="card">
+    <h2>Import Project Gutenberg TXT</h2>
+    <div class="row">
+      <label>Gutenberg ID <input id="gid" type="number" value="11" /></label>
+      <label>Target segment seconds <input id="targetSecs" type="number" value="90" min="30" max="600" /></label>
+      <label>Split WPM <input id="splitWpm" type="number" value="18" min="5" max="80" /></label>
+      <label>Refresh cache <input id="forceRefresh" type="checkbox" /></label>
+      <button id="importBtn">Import / Rebuild</button>
+      <span id="importStatus" class="muted"></span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Library</h2>
+      <div class="row">
+        <select id="books" style="min-width: 22rem"></select>
+        <button id="loadBtn">Load</button>
+      </div>
+      <p id="bookMeta" class="muted"></p>
+    </div>
+
+    <div class="card">
+      <h2>CW profiles</h2>
+      <div class="row">
+        <select id="profiles"></select>
+        <button id="applyProfile">Apply profile</button>
+      </div>
+      <div class="row">
+        <label>Save current as <input id="profileName" placeholder="My QRQ" /></label>
+        <button id="saveProfile">Save profile</button>
+      </div>
+      <p class="muted">Built-ins: Beginner, Normal, Contest, QRQ. Custom profiles are stored in SQLite.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Player</h2>
+    <div class="row">
+      <label>Chapter <select id="chapter"></select></label>
+      <button id="prevSeg">◀ Segment</button>
+      <label>Segment <input id="segment" type="number" value="0" min="0" style="width:6rem" /></label>
+      <button id="nextSeg">Segment ▶</button>
+      <button id="saveParams">Save CW params for segment</button>
+    </div>
+    <div class="row">
+      <label>WPM <input id="wpm" type="number" value="20" min="5" max="80" /></label>
+      <label>Eff WPM <input id="eff" type="number" value="15" min="0" max="80" /></label>
+      <label>Tone Hz <input id="freq" type="number" value="700" min="200" max="1200" /></label>
+      <label>Volume <input id="volume" type="number" value="70" min="0" max="100" /></label>
+      <label>Extra word spacing <input id="ews" type="number" value="0" min="0" max="20" /></label>
+      <label>Real speed <input id="real" type="checkbox" /></label>
+    </div>
+    <div class="row">
+      <label>Start char <input id="charOffset" type="number" value="0" min="0" style="width:7rem" /></label>
+      <button id="playFromHere">Play from char</button>
+      <button id="bookmark">Bookmark current estimate</button>
+      <button id="resume">Resume saved</button>
+      <span id="timeInfo" class="muted"></span>
+    </div>
+    <textarea id="segmentText"></textarea>
+    <div id="player"></div>
+  </div>
+
+  <div class="card">
+    <h2>Timing metadata</h2>
+    <p class="muted">The server returns approximate char timings for the current CW parameters. jscwlib remains the audio source; this metadata is used for better bookmarks.</p>
+    <pre id="timingPreview">No segment loaded.</pre>
+  </div>
+
+<script>
+const $ = id => document.getElementById(id);
+let currentBook = null, bookMeta = null, chapter = 0, segment = 0, currentText = '', currentChapterSegments = 0;
+let cw = null, lastStartedAt = 0, timing = null, profileName = null;
+
+function params() { return { wpm:+$('wpm').value, eff:+$('eff').value, freq:+$('freq').value, volume:+$('volume').value, ews:+$('ews').value, real:$('real').checked }; }
+function setParams(p) { $('wpm').value=p.wpm??20; $('eff').value=p.eff??15; $('freq').value=p.freq??700; $('volume').value=p.volume??70; $('ews').value=p.ews??0; $('real').checked=!!p.real; }
+function clampOffset(n) { return Math.max(0, Math.min(+n || 0, Math.max(0, currentText.length - 1))); }
+function sliceFrom(n) { lastStartedAt = clampOffset(n); $('charOffset').value = lastStartedAt; return currentText.slice(lastStartedAt); }
+function apply() { if (!cw) return; const p=params(); cw.setWpm(p.wpm); cw.setEff(p.eff); cw.setFreq(p.freq); cw.setVolume(p.volume); cw.setEws(p.ews); cw.setReal(p.real); }
+function optionText(b) { return `${b.title} · ${b.chapters} chapters · ${b.segments} segments`; }
+
+async function api(url, options) {
+  const r = await fetch(url, options);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function loadProfiles() {
+  const profiles = await api('/api/profiles');
+  $('profiles').innerHTML = profiles.map(p => `<option value="${p.name}">${p.name} · ${p.params.wpm}/${p.params.eff} @ ${p.params.freq} Hz</option>`).join('');
+  $('profiles').dataset.payload = JSON.stringify(profiles);
+}
+
+async function loadBooks() {
+  const books = await api('/api/books');
+  $('books').innerHTML = books.map(b => `<option value="${b.id}">${optionText(b)}</option>`).join('');
+}
+
+async function loadBook(id) {
+  currentBook = id;
+  bookMeta = await api(`/api/books/${id}`);
+  $('chapter').innerHTML = bookMeta.chapters.map(c => `<option value="${c.chapter_index}">${c.chapter_index + 1}. ${c.title} (${c.segments})</option>`).join('');
+  const st = bookMeta.progress || {chapter_index:0, segment_index:0, char_offset:0};
+  await loadSegment(st.chapter_index || 0, st.segment_index || 0, st.char_offset || 0);
+}
+
+async function loadSegment(c, s, offset=null) {
+  if (!currentBook) return;
+  const data = await api(`/api/books/${currentBook}/segment/${c}/${s}`);
+  chapter = data.chapter_index; segment = data.segment_index; currentText = data.text; currentChapterSegments = data.chapter_segments; timing = data.timing; profileName = data.profile_name;
+  $('chapter').value = chapter; $('segment').value = segment; $('segment').max = currentChapterSegments - 1;
+  $('segmentText').value = currentText;
+  $('bookMeta').textContent = `${bookMeta.title}: ${data.chapter_title}, segment ${segment + 1}/${currentChapterSegments}, ${data.char_count} chars`;
+  setParams(data.params);
+  $('charOffset').value = offset === null ? (data.char_offset || 0) : offset;
+  $('timingPreview').textContent = JSON.stringify({duration_seconds: timing.duration, first_marks: timing.marks.slice(0, 12), truncated: timing.truncated}, null, 2);
+  renderPlayer();
+  await saveState(false, $('charOffset').value);
+}
+
+function renderPlayer() {
+  $('player').innerHTML = '';
+  cw = new jscw({ wpm:+$('wpm').value, freq:+$('freq').value });
+  apply();
+  cw.setText(sliceFrom($('charOffset').value));
+  cw.renderPlayer('player', cw);
+  cw.onPlay = tick;
+  cw.onFinished = tick;
+  tick();
+}
+
+function offsetFromTime(elapsed) {
+  if (!timing || !timing.marks || timing.marks.length === 0) {
+    const len = cw && cw.getLength ? Math.max(cw.getLength(), 1) : 1;
+    return clampOffset(lastStartedAt + Math.floor((elapsed / len) * currentText.slice(lastStartedAt).length));
+  }
+  const target = (timing.marks.find(m => m.i >= lastStartedAt)?.start || 0) + elapsed;
+  let best = lastStartedAt;
+  for (const m of timing.marks) {
+    if (m.start <= target) best = m.i; else break;
+  }
+  return clampOffset(best);
+}
+
+function tick() {
+  if (!cw) return;
+  const t = cw.getTime ? cw.getTime() : 0;
+  const len = cw.getLength ? cw.getLength() : (timing ? timing.duration : 0);
+  const approxChar = offsetFromTime(t);
+  $('timeInfo').textContent = `Position ${t.toFixed(1)}s / ${len.toFixed(1)}s · char ≈ ${approxChar}/${currentText.length}`;
+  if (cw.getRemaining && cw.getRemaining() > 0) requestAnimationFrame(tick);
+}
+
+async function saveState(saveParams=true, offset=null) {
+  if (!currentBook) return;
+  const body = { chapter_index: chapter, segment_index: segment };
+  if (offset !== null) body.char_offset = clampOffset(offset);
+  if (saveParams) { body.params = params(); body.profile_name = profileName; }
+  return api(`/api/books/${currentBook}/state`, { method:'PATCH', headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
+}
+
+async function jump(delta) {
+  let c = chapter, s = segment + delta;
+  if (s < 0 && c > 0) { c--; s = bookMeta.chapters[c].segments - 1; }
+  if (s >= currentChapterSegments && c < bookMeta.chapters.length - 1) { c++; s = 0; }
+  s = Math.max(0, Math.min(s, bookMeta.chapters[c].segments - 1));
+  await loadSegment(c, s, 0);
+}
+
+$('importBtn').onclick = async () => {
+  $('importStatus').textContent = 'Importing...';
+  try {
+    const body = { gutenberg_id:+$('gid').value, target_segment_seconds:+$('targetSecs').value, wpm_for_split:+$('splitWpm').value, force_refresh:$('forceRefresh').checked };
+    const b = await api('/api/import', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)});
+    $('importStatus').textContent = `Imported ${b.title} from ${b.source}`;
+    await loadBooks(); $('books').value = b.id; await loadBook(b.id);
+  } catch (e) { $('importStatus').textContent = e.message; }
+};
+$('loadBtn').onclick = () => $('books').value && loadBook($('books').value);
+$('chapter').onchange = () => loadSegment(+$('chapter').value, 0, 0);
+$('segment').onchange = () => loadSegment(chapter, +$('segment').value, 0);
+$('prevSeg').onclick = () => jump(-1);
+$('nextSeg').onclick = () => jump(1);
+$('saveParams').onclick = async () => { await saveState(true, $('charOffset').value); renderPlayer(); };
+$('playFromHere').onclick = async () => { apply(); cw.play(sliceFrom($('charOffset').value)); await saveState(false, $('charOffset').value); };
+$('bookmark').onclick = async () => { const t = cw && cw.getTime ? cw.getTime() : 0; const approx = offsetFromTime(t); $('charOffset').value = approx; await saveState(false, approx); };
+$('resume').onclick = async () => { if (!currentBook) return; const st = await api(`/api/books/${currentBook}/state`); await loadSegment(st.chapter_index, st.segment_index, st.char_offset); };
+$('applyProfile').onclick = async () => {
+  const profiles = JSON.parse($('profiles').dataset.payload || '[]');
+  const found = profiles.find(p => p.name === $('profiles').value);
+  if (found) { profileName = found.name; setParams(found.params); await saveState(true, $('charOffset').value); renderPlayer(); }
+};
+$('saveProfile').onclick = async () => {
+  const name = $('profileName').value.trim();
+  if (!name) return;
+  await api('/api/profiles', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({name, params:params()})});
+  await loadProfiles(); $('profiles').value = name;
+};
+['wpm','eff','freq','volume','ews','real'].forEach(id => $(id).addEventListener('change', () => { profileName = null; if(cw){ apply(); cw.setText(sliceFrom($('charOffset').value)); } }));
+
+loadProfiles();
+loadBooks();
+</script>
+</body>
+</html>
