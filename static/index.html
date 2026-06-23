@@ -4,95 +4,349 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Morse Audiobook Player</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <script src="https://fkurz.net/ham/jscwlib/releases/jscwlib-0.3.0.js"></script>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 1250px; }
-    textarea { width: 100%; height: 270px; font-family: ui-monospace, monospace; line-height: 1.35; }
-    input, select, button { margin: .25rem; padding: .4rem; }
-    .row { display: flex; flex-wrap: wrap; gap: .45rem; align-items: center; }
-    .card { border: 1px solid #ccc; border-radius: 9px; padding: 1rem; margin: 1rem 0; }
-    .muted { color: #666; }
-    .lookup { margin-top: .5rem; }
-    a { color: #0645ad; }
-    #player { margin-top: 1rem; }
-    label { white-space: nowrap; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-    pre { background: #f6f6f6; padding: .8rem; overflow-x: auto; }
+    :root {
+      --mb-surface: #f7f8fa;
+      --mb-ink: #1d232f;
+      --mb-subtle: #667085;
+      --mb-line: #d9dee8;
+      --mb-accent: #116466;
+      --mb-accent-dark: #0b4a4b;
+      --mb-warm: #d7a64a;
+    }
+
+    body {
+      min-height: 100vh;
+      background:
+        linear-gradient(180deg, #ffffff 0%, var(--mb-surface) 45%, #eef2f5 100%);
+      color: var(--mb-ink);
+    }
+
+    .app-shell {
+      width: min(100%, 1360px);
+      margin: 0 auto;
+      padding: 1rem;
+    }
+
+    .topbar {
+      border-bottom: 1px solid var(--mb-line);
+      background: rgba(255, 255, 255, .9);
+      backdrop-filter: blur(12px);
+    }
+
+    .brand-mark {
+      width: 2.25rem;
+      height: 2.25rem;
+      border-radius: .5rem;
+      display: grid;
+      place-items: center;
+      background: var(--mb-accent);
+      color: #fff;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .panel {
+      border: 1px solid var(--mb-line);
+      border-radius: .5rem;
+      background: rgba(255, 255, 255, .96);
+      box-shadow: 0 .5rem 1.5rem rgba(29, 35, 47, .06);
+    }
+
+    .panel-header {
+      border-bottom: 1px solid var(--mb-line);
+      padding: .9rem 1rem;
+    }
+
+    .panel-body {
+      padding: 1rem;
+    }
+
+    .section-title {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .form-label {
+      margin-bottom: .3rem;
+      color: #344054;
+      font-size: .875rem;
+      font-weight: 650;
+    }
+
+    .form-control,
+    .form-select,
+    .btn {
+      border-radius: .45rem;
+    }
+
+    .btn-primary {
+      --bs-btn-bg: var(--mb-accent);
+      --bs-btn-border-color: var(--mb-accent);
+      --bs-btn-hover-bg: var(--mb-accent-dark);
+      --bs-btn-hover-border-color: var(--mb-accent-dark);
+      --bs-btn-active-bg: var(--mb-accent-dark);
+      --bs-btn-active-border-color: var(--mb-accent-dark);
+    }
+
+    .btn-outline-primary {
+      --bs-btn-color: var(--mb-accent);
+      --bs-btn-border-color: var(--mb-accent);
+      --bs-btn-hover-bg: var(--mb-accent);
+      --bs-btn-hover-border-color: var(--mb-accent);
+    }
+
+    .status-line {
+      color: var(--mb-subtle);
+      min-height: 1.5rem;
+    }
+
+    .book-meta a,
+    .lookup-line a {
+      color: var(--mb-accent-dark);
+      font-weight: 650;
+      text-decoration: none;
+    }
+
+    .book-meta a:hover,
+    .lookup-line a:hover {
+      text-decoration: underline;
+    }
+
+    #segmentText {
+      min-height: 20rem;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      line-height: 1.45;
+      color: #202633;
+      background: #fbfcfd;
+    }
+
+    #player {
+      margin-top: 1rem;
+    }
+
+    #player button,
+    #player input,
+    #player select {
+      margin: .2rem;
+      max-width: 100%;
+    }
+
+    .compact-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: .75rem;
+    }
+
+    @media (max-width: 575.98px) {
+      .app-shell {
+        padding: .75rem;
+      }
+
+      .panel-body,
+      .panel-header {
+        padding: .85rem;
+      }
+
+      .compact-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .btn,
+      .form-control,
+      .form-select {
+        min-height: 2.65rem;
+      }
+    }
   </style>
 </head>
 <body>
-  <h1>Morse Audiobook Player</h1>
-
-  <div class="card">
-    <h2>Import Project Gutenberg TXT</h2>
-    <div class="row">
-      <label>Gutenberg ID <input id="gid" type="number" value="11" /></label>
-      <label>Target segment seconds <input id="targetSecs" type="number" value="90" min="30" max="600" /></label>
-      <label>Split WPM <input id="splitWpm" type="number" value="18" min="5" max="80" /></label>
-      <label>Refresh cache <input id="forceRefresh" type="checkbox" /></label>
-      <button id="lookupBtn">Lookup title</button>
-      <button id="importBtn">Import / Rebuild</button>
-      <span id="importStatus" class="muted"></span>
-    </div>
-    <div class="lookup muted">
-      <span id="lookupStatus">Enter an ID to preview its title.</span>
-      <a id="gutenbergLink" href="https://www.gutenberg.org/ebooks/11" target="_blank" rel="noopener">Open on Project Gutenberg</a>
-    </div>
-  </div>
-
-  <div class="grid">
-    <div class="card">
-      <h2>Library</h2>
-      <div class="row">
-        <select id="books" style="min-width: 22rem"></select>
-        <button id="loadBtn">Load</button>
+  <header class="topbar sticky-top">
+    <div class="app-shell py-3">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+        <div class="d-flex align-items-center gap-3">
+          <div class="brand-mark">CW</div>
+          <div>
+            <h1 class="h4 mb-0">Morse Audiobook Player</h1>
+            <div class="text-secondary small">Project Gutenberg reader for CW practice</div>
+          </div>
+        </div>
+        <a id="gutenbergLink" class="btn btn-outline-primary btn-sm" href="https://www.gutenberg.org/ebooks/11" target="_blank" rel="noopener">Open on Project Gutenberg</a>
       </div>
-      <p id="bookMeta" class="muted"></p>
     </div>
+  </header>
 
-    <div class="card">
-      <h2>CW profiles</h2>
-      <div class="row">
-        <select id="profiles"></select>
-        <button id="applyProfile">Apply profile</button>
+  <main class="app-shell py-4">
+    <section class="panel mb-4">
+      <div class="panel-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <h2 class="section-title">Import Project Gutenberg TXT</h2>
+        <span id="importStatus" class="status-line small"></span>
       </div>
-      <div class="row">
-        <label>Save current as <input id="profileName" placeholder="My QRQ" /></label>
-        <button id="saveProfile">Save profile</button>
+      <div class="panel-body">
+        <div class="row g-3 align-items-end">
+          <div class="col-12 col-sm-6 col-lg-2">
+            <label for="gid" class="form-label">Gutenberg ID</label>
+            <input id="gid" class="form-control" type="number" value="11" min="1" inputmode="numeric" />
+          </div>
+          <div class="col-12 col-sm-6 col-lg-3">
+            <label for="targetSecs" class="form-label">Target segment seconds</label>
+            <input id="targetSecs" class="form-control" type="number" value="90" min="30" max="600" />
+          </div>
+          <div class="col-12 col-sm-6 col-lg-2">
+            <label for="splitWpm" class="form-label">Split WPM</label>
+            <input id="splitWpm" class="form-control" type="number" value="40" min="5" max="80" />
+          </div>
+          <div class="col-12 col-sm-6 col-lg-2">
+            <div class="form-check form-switch pb-lg-2">
+              <input id="forceRefresh" class="form-check-input" type="checkbox" role="switch" />
+              <label for="forceRefresh" class="form-check-label">Refresh cache</label>
+            </div>
+          </div>
+          <div class="col-12 col-lg-3">
+            <div class="d-grid gap-2 d-sm-flex">
+              <button id="lookupBtn" class="btn btn-outline-primary flex-fill" type="button">Lookup title</button>
+              <button id="importBtn" class="btn btn-primary flex-fill" type="button">Import / Rebuild</button>
+            </div>
+          </div>
+        </div>
+        <div class="lookup-line status-line mt-3 d-flex flex-column flex-sm-row gap-2">
+          <span id="lookupStatus">Enter an ID to preview its title.</span>
+        </div>
       </div>
-      <p class="muted">Built-ins: Beginner, Normal, Contest, QRQ. Custom profiles are stored in SQLite.</p>
-    </div>
-  </div>
+    </section>
 
-  <div class="card">
-    <h2>Player</h2>
-    <div class="row">
-      <label>Chapter <select id="chapter"></select></label>
-      <button id="prevSeg">◀ Segment</button>
-      <label>Segment <input id="segment" type="number" value="0" min="0" style="width:6rem" /></label>
-      <button id="nextSeg">Segment ▶</button>
-      <button id="saveParams">Save CW params for segment</button>
-    </div>
-    <div class="row">
-      <label>WPM <input id="wpm" type="number" value="20" min="5" max="80" /></label>
-      <label>Eff WPM <input id="eff" type="number" value="15" min="0" max="80" /></label>
-      <label>Tone Hz <input id="freq" type="number" value="700" min="200" max="1200" /></label>
-      <label>Volume <input id="volume" type="number" value="70" min="0" max="100" /></label>
-      <label>Extra word spacing <input id="ews" type="number" value="0" min="0" max="20" /></label>
-      <label>Real speed <input id="real" type="checkbox" /></label>
-    </div>
-    <div class="row">
-      <label>Start char <input id="charOffset" type="number" value="0" min="0" style="width:7rem" /></label>
-      <button id="playFromHere">Play from char</button>
-      <button id="bookmark">Bookmark current estimate</button>
-      <button id="resume">Resume saved</button>
-      <span id="timeInfo" class="muted"></span>
-    </div>
-    <textarea id="segmentText"></textarea>
-    <div id="player"></div>
-  </div>
+    <div class="row g-4 mb-4">
+      <section class="col-12 col-xl-7">
+        <div class="panel h-100">
+          <div class="panel-header">
+            <h2 class="section-title">Library</h2>
+          </div>
+          <div class="panel-body">
+            <div class="row g-2 align-items-end">
+              <div class="col-12 col-md">
+                <label for="books" class="form-label">Book</label>
+                <select id="books" class="form-select"></select>
+              </div>
+              <div class="col-12 col-md-auto">
+                <button id="loadBtn" class="btn btn-primary w-100" type="button">Load</button>
+              </div>
+            </div>
+            <p id="bookMeta" class="book-meta status-line small mb-0 mt-3"></p>
+          </div>
+        </div>
+      </section>
 
+      <section class="col-12 col-xl-5">
+        <div class="panel h-100">
+          <div class="panel-header">
+            <h2 class="section-title">CW Profiles</h2>
+          </div>
+          <div class="panel-body">
+            <div class="row g-2 align-items-end mb-3">
+              <div class="col-12 col-md">
+                <label for="profiles" class="form-label">Profile</label>
+                <select id="profiles" class="form-select"></select>
+              </div>
+              <div class="col-12 col-md-auto">
+                <button id="applyProfile" class="btn btn-outline-primary w-100" type="button">Apply</button>
+              </div>
+            </div>
+            <div class="row g-2 align-items-end">
+              <div class="col-12 col-md">
+                <label for="profileName" class="form-label">Save current as</label>
+                <input id="profileName" class="form-control" placeholder="My QRQ" />
+              </div>
+              <div class="col-12 col-md-auto">
+                <button id="saveProfile" class="btn btn-primary w-100" type="button">Save profile</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <div class="panel-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <h2 class="section-title">Player</h2>
+        <span id="timeInfo" class="status-line small"></span>
+      </div>
+      <div class="panel-body">
+        <div class="row g-3 align-items-end mb-3">
+          <div class="col-12 col-lg">
+            <label for="chapter" class="form-label">Chapter</label>
+            <select id="chapter" class="form-select"></select>
+          </div>
+          <div class="col-6 col-sm-auto">
+            <button id="prevSeg" class="btn btn-outline-secondary w-100" type="button">Prev segment</button>
+          </div>
+          <div class="col-12 col-sm-4 col-lg-2">
+            <label for="segment" class="form-label">Segment</label>
+            <input id="segment" class="form-control" type="number" value="0" min="0" />
+          </div>
+          <div class="col-6 col-sm-auto">
+            <button id="nextSeg" class="btn btn-outline-secondary w-100" type="button">Next segment</button>
+          </div>
+          <div class="col-12 col-lg-auto">
+            <button id="saveParams" class="btn btn-outline-primary w-100" type="button">Save CW params</button>
+          </div>
+        </div>
+
+        <div class="compact-grid mb-3">
+          <div>
+            <label for="wpm" class="form-label">WPM</label>
+            <input id="wpm" class="form-control" type="number" value="20" min="5" max="80" />
+          </div>
+          <div>
+            <label for="eff" class="form-label">Eff WPM</label>
+            <input id="eff" class="form-control" type="number" value="15" min="0" max="80" />
+          </div>
+          <div>
+            <label for="freq" class="form-label">Tone Hz</label>
+            <input id="freq" class="form-control" type="number" value="700" min="200" max="1200" />
+          </div>
+          <div>
+            <label for="volume" class="form-label">Volume</label>
+            <input id="volume" class="form-control" type="number" value="70" min="0" max="100" />
+          </div>
+          <div>
+            <label for="ews" class="form-label">Extra word spacing</label>
+            <input id="ews" class="form-control" type="number" value="0" min="0" max="20" />
+          </div>
+          <div class="d-flex align-items-end">
+            <div class="form-check form-switch pb-2">
+              <input id="real" class="form-check-input" type="checkbox" role="switch" />
+              <label for="real" class="form-check-label">Real speed</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="row g-2 align-items-end mb-3">
+          <div class="col-12 col-sm-4 col-md-3 col-xl-2">
+            <label for="charOffset" class="form-label">Start char</label>
+            <input id="charOffset" class="form-control" type="number" value="0" min="0" />
+          </div>
+          <div class="col-12 col-sm">
+            <div class="d-grid gap-2 d-md-flex">
+              <button id="playFromHere" class="btn btn-primary" type="button">Play from char</button>
+              <button id="bookmark" class="btn btn-outline-secondary" type="button">Bookmark estimate</button>
+              <button id="resume" class="btn btn-outline-secondary" type="button">Resume saved</button>
+            </div>
+          </div>
+        </div>
+
+        <label for="segmentText" class="form-label">Segment text</label>
+        <textarea id="segmentText" class="form-control"></textarea>
+        <div id="player" class="border rounded p-2 bg-white overflow-auto"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 let currentBook = null, bookMeta = null, chapter = 0, segment = 0, currentText = '', currentChapterSegments = 0;
