@@ -86,12 +86,6 @@
     <div id="player"></div>
   </div>
 
-  <div class="card">
-    <h2>Timing metadata</h2>
-    <p class="muted">The server returns approximate char timings for the current CW parameters. jscwlib remains the audio source; this metadata is used for better bookmarks.</p>
-    <pre id="timingPreview">No segment loaded.</pre>
-  </div>
-
 <script>
 const $ = id => document.getElementById(id);
 let currentBook = null, bookMeta = null, chapter = 0, segment = 0, currentText = '', currentChapterSegments = 0;
@@ -138,7 +132,6 @@ async function loadSegment(c, s, offset=null) {
   $('bookMeta').textContent = `${bookMeta.title}: ${data.chapter_title}, segment ${segment + 1}/${currentChapterSegments}, ${data.char_count} chars`;
   setParams(data.params);
   $('charOffset').value = offset === null ? (data.char_offset || 0) : offset;
-  $('timingPreview').textContent = JSON.stringify({duration_seconds: timing.duration, first_marks: timing.marks.slice(0, 12), truncated: timing.truncated}, null, 2);
   renderPlayer();
   await saveState(false, $('charOffset').value);
 }
