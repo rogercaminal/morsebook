@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import textwrap
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,15 @@ class ImportRequest(BaseModel):
     wpm_for_split: int = Field(default=60, ge=5, le=80)
     title: str | None = None
     force_refresh: bool = False
+
+
+class GutenbergLookup(BaseModel):
+    gutenberg_id: int
+    title: str
+    authors: list[str] = []
+    languages: list[str] = []
+    url: str
+    source: str
 
 
 class CWParams(BaseModel):
@@ -213,6 +223,13 @@ def split_segments(text: str, max_chars: int) -> list[str]:
     return segments or [text[:max_chars]]
 
 
+def display_author_name(name: str) -> str:
+    parts = [p.strip() for p in name.split(",", 1)]
+    if len(parts) == 2 and all(parts):
+        return f"{parts[1]} {parts[0]}"
+    return name.strip()
+
+
 async def fetch_gutenberg_txt(gid: int, force_refresh: bool = False) -> tuple[str, str]:
     cached = RAW_DIR / f"gutenberg_{gid}.txt"
     if cached.exists() and not force_refresh:
@@ -234,6 +251,59 @@ async def fetch_gutenberg_txt(gid: int, force_refresh: bool = False) -> tuple[st
             except Exception as e:
                 last = f"{url}: {e}"
     raise HTTPException(502, f"Could not fetch Gutenberg TXT for id {gid}. Last error: {last}")
+
+
+async def fetch_gutenberg_metadata(gid: int) -> GutenbergLookup:
+    rdf_url = f"https://www.gutenberg.org/cache/epub/{gid}/pg{gid}.rdf"
+    book_url = f"https://www.gutenberg.org/ebooks/{gid}"
+    ns = {
+        "dcterms": "http://purl.org/dc/terms/",
+        "pgterms": "http://www.gutenberg.org/2009/pgterms/",
+        "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    }
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15, headers={"User-Agent": "morsebook/0.3"}) as client:
+            r = await client.get(rdf_url)
+        if r.status_code < 400:
+            root = ET.fromstring(r.text)
+            title = (root.findtext(".//dcterms:title", namespaces=ns) or "").strip()
+            authors = [
+                display_author_name(name.text)
+                for name in root.findall(".//dcterms:creator/pgterms:agent/pgterms:name", namespaces=ns)
+                if name.text and name.text.strip()
+            ]
+            languages = [
+                value.text.strip()
+                for value in root.findall(".//dcterms:language/rdf:Description/rdf:value", namespaces=ns)
+                if value.text and value.text.strip()
+            ]
+            if title:
+                return GutenbergLookup(
+                    gutenberg_id=gid,
+                    title=title,
+                    authors=authors,
+                    languages=languages,
+                    url=book_url,
+                    source=rdf_url,
+                )
+    except Exception:
+        pass
+
+    raw, source = await fetch_gutenberg_txt(gid)
+    _, meta = normalize_gutenberg_text(raw)
+    title = meta.get("title")
+    if not title:
+        raise HTTPException(404, f"Could not find metadata for Gutenberg id {gid}")
+    authors = [meta["author"]] if meta.get("author") else []
+    languages = [meta["language"]] if meta.get("language") else []
+    return GutenbergLookup(
+        gutenberg_id=gid,
+        title=title,
+        authors=authors,
+        languages=languages,
+        url=book_url,
+        source=source,
+    )
 
 
 MORSE_UNITS = {
@@ -301,6 +371,13 @@ def upsert_profile(profile: ProfileIn) -> dict[str, Any]:
     with db() as conn:
         conn.execute("REPLACE INTO cw_profiles VALUES (?, ?, ?, ?, ?, ?, ?)", (profile.name, p.wpm, p.eff, p.freq, p.volume, p.ews, int(p.real)))
     return {"name": profile.name, "params": p.model_dump()}
+
+
+@app.get("/api/gutenberg/{gutenberg_id}")
+async def get_gutenberg_metadata(gutenberg_id: int) -> GutenbergLookup:
+    if gutenberg_id < 1:
+        raise HTTPException(422, "Gutenberg ID must be a positive integer")
+    return await fetch_gutenberg_metadata(gutenberg_id)
 
 
 @app.get("/api/books")
