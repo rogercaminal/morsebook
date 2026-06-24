@@ -203,24 +203,49 @@ def chapterize(text: str) -> list[tuple[str, str]]:
 
 
 def chars_for_seconds(seconds: int, wpm: int) -> int:
-    return max(400, int(seconds * wpm * 5 / 60))
+    return max(1, int(seconds * wpm * 5 / 60))
 
 
 def split_segments(text: str, max_chars: int) -> list[str]:
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    segments, cur = [], ""
+    min_chars = max(40, int(max_chars * 0.45))
+    hard_max = max(max_chars, int(max_chars * 1.35))
+    pieces: list[str] = []
     for para in paragraphs:
         if len(para) > max_chars:
-            if cur:
-                segments.append(cur.strip()); cur = ""
-            segments.extend(c.strip() for c in textwrap.wrap(para, width=max_chars, break_long_words=False, replace_whitespace=False) if c.strip())
-        elif cur and len(cur) + len(para) + 2 > max_chars:
-            segments.append(cur.strip()); cur = para
+            pieces.extend(c.strip() for c in textwrap.wrap(para, width=max_chars, break_long_words=False, replace_whitespace=False) if c.strip())
         else:
-            cur = f"{cur}\n\n{para}" if cur else para
+            pieces.append(para)
+
+    segments, cur = [], ""
+    for piece in pieces:
+        combined = f"{cur}\n\n{piece}" if cur else piece
+        if not cur or len(combined) <= max_chars or (len(cur) < min_chars and len(combined) <= hard_max):
+            cur = combined
+        else:
+            segments.append(cur.strip())
+            cur = piece
     if cur:
         segments.append(cur.strip())
-    return segments or [text[:max_chars]]
+
+    balanced: list[str] = []
+    for seg in segments:
+        if balanced and len(seg) < min_chars and len(balanced[-1]) + len(seg) + 2 <= hard_max:
+            balanced[-1] = f"{balanced[-1]}\n\n{seg}"
+        else:
+            balanced.append(seg)
+    segments = balanced
+    balanced = []
+    i = 0
+    while i < len(segments):
+        seg = segments[i]
+        if len(seg) < min_chars and i + 1 < len(segments) and len(seg) + len(segments[i + 1]) + 2 <= hard_max:
+            balanced.append(f"{seg}\n\n{segments[i + 1]}")
+            i += 2
+        else:
+            balanced.append(seg)
+            i += 1
+    return balanced or [text[:max_chars]]
 
 
 def display_author_name(name: str) -> str:

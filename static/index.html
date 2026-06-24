@@ -4,6 +4,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Morse Audiobook Player</title>
+  <script>
+    (() => {
+      const stored = localStorage.getItem('morsebook-theme');
+      const preferred = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.dataset.bsTheme = stored || preferred;
+    })();
+  </script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <script src="https://fkurz.net/ham/jscwlib/releases/jscwlib-0.3.0.js"></script>
   <style>
@@ -17,11 +24,26 @@
       --mb-warm: #d7a64a;
     }
 
+    [data-bs-theme="dark"] {
+      --mb-surface: #121821;
+      --mb-ink: #eef2f6;
+      --mb-subtle: #aab4c3;
+      --mb-line: #354154;
+      --mb-accent: #4db6ac;
+      --mb-accent-dark: #7fd6ce;
+      --mb-warm: #e2b95f;
+    }
+
     body {
       min-height: 100vh;
       background:
         linear-gradient(180deg, #ffffff 0%, var(--mb-surface) 45%, #eef2f5 100%);
       color: var(--mb-ink);
+    }
+
+    [data-bs-theme="dark"] body {
+      background:
+        linear-gradient(180deg, #0b1119 0%, var(--mb-surface) 48%, #111722 100%);
     }
 
     .app-shell {
@@ -34,6 +56,10 @@
       border-bottom: 1px solid var(--mb-line);
       background: rgba(255, 255, 255, .9);
       backdrop-filter: blur(12px);
+    }
+
+    [data-bs-theme="dark"] .topbar {
+      background: rgba(14, 20, 30, .9);
     }
 
     .brand-mark {
@@ -53,6 +79,11 @@
       border-radius: .5rem;
       background: rgba(255, 255, 255, .96);
       box-shadow: 0 .5rem 1.5rem rgba(29, 35, 47, .06);
+    }
+
+    [data-bs-theme="dark"] .panel {
+      background: rgba(20, 28, 40, .96);
+      box-shadow: 0 .5rem 1.5rem rgba(0, 0, 0, .22);
     }
 
     .panel-header {
@@ -76,6 +107,10 @@
       color: #344054;
       font-size: .875rem;
       font-weight: 650;
+    }
+
+    [data-bs-theme="dark"] .form-label {
+      color: #d6dce5;
     }
 
     .form-control,
@@ -126,8 +161,15 @@
       background: #fbfcfd;
     }
 
+    [data-bs-theme="dark"] #segmentText {
+      color: #e7ecf3;
+      background: #101722;
+    }
+
     #player {
       margin-top: 1rem;
+      background: var(--bs-body-bg) !important;
+      border-color: var(--mb-line) !important;
     }
 
     #player button,
@@ -176,7 +218,10 @@
             <div class="text-secondary small">Project Gutenberg reader for CW practice</div>
           </div>
         </div>
-        <a id="gutenbergLink" class="btn btn-outline-primary btn-sm" href="https://www.gutenberg.org/ebooks/11" target="_blank" rel="noopener">Open on Project Gutenberg</a>
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          <button id="themeToggle" class="btn btn-outline-secondary btn-sm" type="button" aria-pressed="false">Night mode</button>
+          <a id="gutenbergLink" class="btn btn-outline-primary btn-sm" href="https://www.gutenberg.org/ebooks/11" target="_blank" rel="noopener">Open on Project Gutenberg</a>
+        </div>
       </div>
     </div>
   </header>
@@ -353,6 +398,16 @@ let currentBook = null, bookMeta = null, chapter = 0, segment = 0, currentText =
 let cw = null, lastStartedAt = 0, timing = null, profileName = null;
 let lookupTimer = null, lookupRequest = 0;
 
+function currentTheme() { return document.documentElement.dataset.bsTheme === 'dark' ? 'dark' : 'light'; }
+function setTheme(theme) {
+  const next = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.bsTheme = next;
+  localStorage.setItem('morsebook-theme', next);
+  if ($('themeToggle')) {
+    $('themeToggle').textContent = next === 'dark' ? 'Day mode' : 'Night mode';
+    $('themeToggle').setAttribute('aria-pressed', String(next === 'dark'));
+  }
+}
 function params() { return { wpm:+$('wpm').value, eff:+$('eff').value, freq:+$('freq').value, volume:+$('volume').value, ews:+$('ews').value, real:$('real').checked }; }
 function setParams(p) { $('wpm').value=p.wpm??20; $('eff').value=p.eff??15; $('freq').value=p.freq??700; $('volume').value=p.volume??70; $('ews').value=p.ews??0; $('real').checked=!!p.real; }
 function clampOffset(n) { return Math.max(0, Math.min(+n || 0, Math.max(0, currentText.length - 1))); }
@@ -489,6 +544,7 @@ $('importBtn').onclick = async () => {
   } catch (e) { $('importStatus').textContent = e.message; }
 };
 $('lookupBtn').onclick = lookupGutenbergTitle;
+$('themeToggle').onclick = () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
 $('gid').addEventListener('input', scheduleLookup);
 $('loadBtn').onclick = () => $('books').value && loadBook($('books').value);
 $('chapter').onchange = () => loadSegment(+$('chapter').value, 0, 0);
@@ -514,6 +570,7 @@ $('saveProfile').onclick = async () => {
 
 loadProfiles();
 loadBooks();
+setTheme(currentTheme());
 setGutenbergLink($('gid').value);
 lookupGutenbergTitle();
 </script>
