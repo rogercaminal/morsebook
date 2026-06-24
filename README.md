@@ -24,6 +24,48 @@ docker run --rm -p 8000:8000 -v morsebook_data:/app/data morsebook
 
 Open <http://localhost:8000>.
 
+## Run with Docker Compose
+
+Standalone:
+
+```bash
+docker compose up -d --build
+```
+
+Open <http://localhost:8000>.
+
+The compose file stores SQLite data and cached Gutenberg TXT files in the named volume `morsebook_data`.
+
+To copy this service into another Docker Compose file, include:
+
+```yaml
+services:
+  morsebook:
+    build:
+      context: /path/to/morsebook
+    container_name: morsebook
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - morsebook_data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5).read()"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  morsebook_data:
+```
+
+If port `8000` is already used on the Raspberry Pi, change the left side only, for example `"8010:8000"`.
+
 ## Run without Docker
 
 ```bash
