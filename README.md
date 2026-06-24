@@ -3,8 +3,10 @@
 A local Project Gutenberg Morse-code audiobook player.
 
 - Python/FastAPI backend
+- Bootstrap responsive web UI with day/night mode
 - SQLite persistence
 - Server-side Gutenberg TXT cache
+- Project Gutenberg title lookup and external book links
 - Gutenberg header/footer stripping
 - Chapter and segment navigation
 - jscwlib playback in the browser
@@ -31,11 +33,42 @@ pip install -r requirements.txt
 uvicorn app:app --reload --host 127.0.0.1 --port 8000
 ```
 
+Open <http://127.0.0.1:8000>.
+
+## Importing books
+
+Use a Project Gutenberg ID, then optionally click **Lookup title** to confirm the book before importing.
+
+Import options:
+
+- `Target segment seconds`: desired listening duration for each generated chunk.
+- `Split WPM`: WPM used to estimate how many characters fit in the target duration.
+- `Refresh cache`: downloads the TXT again instead of using `data/raw/`.
+
+The segment size target is approximately:
+
+```text
+target_segment_seconds * split_wpm * 5 / 60
+```
+
+The splitter treats this as a soft target. It may merge short headings or tiny wrap remainders with neighboring text so that very small fragments do not become standalone chunks. Changing playback WPM later does not resplit a book; click **Import / Rebuild** again after changing import options.
+
 ## Example Gutenberg IDs
 
 - `11`: Alice's Adventures in Wonderland
 - `1342`: Pride and Prejudice
 - `84`: Frankenstein
+
+## Tests
+
+Install dependencies, then run pytest:
+
+```bash
+. .venv/bin/activate
+python -m pytest -v
+```
+
+The tests cover segment sizing and the short-fragment merging behavior used during import.
 
 ## Data model
 
