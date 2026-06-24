@@ -43,12 +43,15 @@ class GutenbergLookup(BaseModel):
 
 
 class CWParams(BaseModel):
-    wpm: int = Field(default=20, ge=5, le=80)
-    eff: int = Field(default=15, ge=0, le=80)
-    freq: int = Field(default=700, ge=200, le=1200)
-    volume: int = Field(default=70, ge=0, le=100)
+    wpm: int = Field(default=40, ge=5, le=80)
+    eff: int = Field(default=0, ge=0, le=80)
+    freq: int = Field(default=600, ge=200, le=1200)
+    volume: int = Field(default=30, ge=0, le=100)
     ews: int = Field(default=0, ge=0, le=20)
     real: bool = False
+
+
+DEFAULT_PROFILE_NAME = "VHSC"
 
 
 class ProfileIn(BaseModel):
@@ -139,15 +142,24 @@ def init_db() -> None:
             """
         )
         defaults = {
-            "Beginner": CWParams(wpm=18, eff=10, freq=600, volume=50, ews=1, real=False),
-            "HSC": CWParams(wpm=25, eff=0, freq=600, volume=50, ews=0, real=False),
-            "VHSC": CWParams(wpm=40, eff=0, freq=600, volume=50, ews=0, real=False),
-            "SHSC": CWParams(wpm=50, eff=0, freq=600, volume=50, ews=0, real=False),
-            "EHSC": CWParams(wpm=60, eff=0, freq=600, volume=50, ews=0, real=False),
+            "VHSC": CWParams(wpm=40, eff=0, freq=600, volume=30, ews=0, real=False),
+            "Beginner": CWParams(wpm=18, eff=10, freq=600, volume=30, ews=1, real=False),
+            "HSC": CWParams(wpm=25, eff=0, freq=600, volume=30, ews=0, real=False),
+            "SHSC": CWParams(wpm=50, eff=0, freq=600, volume=30, ews=0, real=False),
+            "EHSC": CWParams(wpm=60, eff=0, freq=600, volume=30, ews=0, real=False),
         }
         for name, p in defaults.items():
             conn.execute(
-                "INSERT OR IGNORE INTO cw_profiles VALUES (?, ?, ?, ?, ?, ?, ?)",
+                """
+                INSERT INTO cw_profiles VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                  wpm=excluded.wpm,
+                  eff=excluded.eff,
+                  freq=excluded.freq,
+                  volume=excluded.volume,
+                  ews=excluded.ews,
+                  real=excluded.real
+                """,
                 (name, p.wpm, p.eff, p.freq, p.volume, p.ews, int(p.real)),
             )
 
@@ -386,7 +398,17 @@ def index() -> str:
 @app.get("/api/profiles")
 def profiles() -> list[dict[str, Any]]:
     with db() as conn:
-        rows = conn.execute("SELECT * FROM cw_profiles ORDER BY CASE name WHEN 'Beginner' THEN 1 WHEN 'Normal' THEN 2 WHEN 'Contest' THEN 3 WHEN 'QRQ' THEN 4 ELSE 5 END, name").fetchall()
+        rows = conn.execute("""
+            SELECT * FROM cw_profiles
+            ORDER BY CASE name
+              WHEN ? THEN 1
+              WHEN 'Beginner' THEN 2
+              WHEN 'HSC' THEN 3
+              WHEN 'SHSC' THEN 4
+              WHEN 'EHSC' THEN 5
+              ELSE 6
+            END, name
+        """, (DEFAULT_PROFILE_NAME,)).fetchall()
         return [{"name": r["name"], "params": row_params(r)} for r in rows]
 
 

@@ -344,19 +344,19 @@
         <div class="compact-grid mb-3">
           <div>
             <label for="wpm" class="form-label">WPM</label>
-            <input id="wpm" class="form-control" type="number" value="20" min="5" max="80" />
+            <input id="wpm" class="form-control" type="number" value="40" min="5" max="80" />
           </div>
           <div>
             <label for="eff" class="form-label">Eff WPM</label>
-            <input id="eff" class="form-control" type="number" value="15" min="0" max="80" />
+            <input id="eff" class="form-control" type="number" value="0" min="0" max="80" />
           </div>
           <div>
             <label for="freq" class="form-label">Tone Hz</label>
-            <input id="freq" class="form-control" type="number" value="700" min="200" max="1200" />
+            <input id="freq" class="form-control" type="number" value="600" min="200" max="1200" />
           </div>
           <div>
             <label for="volume" class="form-label">Volume</label>
-            <input id="volume" class="form-control" type="number" value="70" min="0" max="100" />
+            <input id="volume" class="form-control" type="number" value="30" min="0" max="100" />
           </div>
           <div>
             <label for="ews" class="form-label">Extra word spacing</label>
@@ -397,6 +397,7 @@ const $ = id => document.getElementById(id);
 let currentBook = null, bookMeta = null, chapter = 0, segment = 0, currentText = '', currentChapterSegments = 0;
 let cw = null, lastStartedAt = 0, timing = null, profileName = null;
 let lookupTimer = null, lookupRequest = 0;
+const DEFAULT_PROFILE_NAME = 'VHSC';
 
 function currentTheme() { return document.documentElement.dataset.bsTheme === 'dark' ? 'dark' : 'light'; }
 function setTheme(theme) {
@@ -409,7 +410,7 @@ function setTheme(theme) {
   }
 }
 function params() { return { wpm:+$('wpm').value, eff:+$('eff').value, freq:+$('freq').value, volume:+$('volume').value, ews:+$('ews').value, real:$('real').checked }; }
-function setParams(p) { $('wpm').value=p.wpm??20; $('eff').value=p.eff??15; $('freq').value=p.freq??700; $('volume').value=p.volume??70; $('ews').value=p.ews??0; $('real').checked=!!p.real; }
+function setParams(p) { $('wpm').value=p.wpm??40; $('eff').value=p.eff??0; $('freq').value=p.freq??600; $('volume').value=p.volume??30; $('ews').value=p.ews??0; $('real').checked=!!p.real; }
 function clampOffset(n) { return Math.max(0, Math.min(+n || 0, Math.max(0, currentText.length - 1))); }
 function sliceFrom(n) { lastStartedAt = clampOffset(n); $('charOffset').value = lastStartedAt; return currentText.slice(lastStartedAt); }
 function apply() { if (!cw) return; const p=params(); cw.setWpm(p.wpm); cw.setEff(p.eff); cw.setFreq(p.freq); cw.setVolume(p.volume); cw.setEws(p.ews); cw.setReal(p.real); }
@@ -431,6 +432,7 @@ async function loadProfiles() {
   const profiles = await api('/api/profiles');
   $('profiles').innerHTML = profiles.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)} · ${p.params.wpm}/${p.params.eff} @ ${p.params.freq} Hz</option>`).join('');
   $('profiles').dataset.payload = JSON.stringify(profiles);
+  if (profiles.some(p => p.name === DEFAULT_PROFILE_NAME)) $('profiles').value = DEFAULT_PROFILE_NAME;
 }
 
 async function loadBooks() {
@@ -454,6 +456,7 @@ async function loadSegment(c, s, offset=null) {
   $('segmentText').value = currentText;
   $('bookMeta').innerHTML = `${escapeHtml(bookMeta.title)}: ${escapeHtml(data.chapter_title)}, segment ${segment + 1}/${currentChapterSegments}, ${data.char_count} chars · <a href="${gutenbergUrl(bookMeta.gutenberg_id)}" target="_blank" rel="noopener">Project Gutenberg</a>`;
   setParams(data.params);
+  if ($('profiles').options.length) $('profiles').value = profileName || DEFAULT_PROFILE_NAME;
   $('charOffset').value = offset === null ? (data.char_offset || 0) : offset;
   renderPlayer();
   await saveState(false, $('charOffset').value);
