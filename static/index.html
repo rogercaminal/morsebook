@@ -173,6 +173,39 @@
       border-color: var(--mb-line) !important;
     }
 
+    #wordTracker {
+      min-height: 4.5rem;
+      max-height: 9rem;
+      overflow: auto;
+      line-height: 1.8;
+      color: var(--mb-ink);
+      background: var(--bs-body-bg);
+      border-color: var(--mb-line) !important;
+    }
+
+    .word-piece {
+      border-radius: .25rem;
+      display: inline-block;
+      margin: .06rem .03rem;
+      padding: .05rem .18rem;
+      transition: background-color .12s ease, color .12s ease;
+    }
+
+    .word-piece.active {
+      background: rgba(17, 100, 102, .2);
+      box-shadow: inset 0 -2px 0 var(--mb-accent);
+      font-weight: 700;
+    }
+
+    [data-bs-theme="dark"] .word-piece.active {
+      background: rgba(77, 182, 172, .22);
+    }
+
+    .tracker-ellipsis {
+      color: var(--mb-subtle);
+      padding: 0 .25rem;
+    }
+
     #player button,
     #player input,
     #player select {
@@ -385,8 +418,15 @@
           </div>
         </div>
 
-        <label for="segmentText" class="form-label">Segment text</label>
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+          <label for="segmentText" class="form-label mb-0">Segment text</label>
+          <div class="form-check form-switch">
+            <input id="followWord" class="form-check-input" type="checkbox" role="switch" checked />
+            <label for="followWord" class="form-check-label">Follow word</label>
+          </div>
+        </div>
         <textarea id="segmentText" class="form-control"></textarea>
+        <div id="wordTracker" class="border rounded p-3 mt-2"></div>
         <div id="player" class="border rounded p-2 bg-white overflow-auto"></div>
       </div>
     </section>
@@ -398,7 +438,11 @@ const $ = id => document.getElementById(id);
 let currentBook = null, bookMeta = null, chapter = 0, segment = 0, currentText = '', currentChapterSegments = 0;
 let cw = null, lastStartedAt = 0, timing = null, profileName = null;
 let lookupTimer = null, lookupRequest = 0;
+let wordRanges = [], activeWordIndex = -1;
+let tickFrame = null, lastTickerTime = -1, staleTickerFrames = 0;
 const DEFAULT_PROFILE_NAME = 'VHSC';
+const WORD_CONTEXT_BEFORE = 8;
+const WORD_CONTEXT_AFTER = 14;
 
 function currentTheme() { return document.documentElement.dataset.bsTheme === 'dark' ? 'dark' : 'light'; }
 function setTheme(theme) {
@@ -441,6 +485,58 @@ async function loadBooks() {
   $('books').innerHTML = books.map(b => `<option value="${b.id}">${escapeHtml(optionText(b))}</option>`).join('');
 }
 
+function splitWordRanges(text) {
+  const ranges = [];
+  const pattern = /\S+/g;
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    ranges.push({ start: match.index, end: match.index + match[0].length, text: match[0] });
+  }
+  return ranges.length ? ranges : [{ start: 0, end: text.length, text }];
+}
+
+function renderWordTracker() {
+  wordRanges = splitWordRanges(currentText);
+  activeWordIndex = -1;
+  updateWordHighlight(+$('charOffset').value || 0, true);
+}
+
+function wordIndexForOffset(offset) {
+  if (!wordRanges.length) return -1;
+  const pos = clampOffset(offset);
+  let lo = 0, hi = wordRanges.length - 1;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const r = wordRanges[mid];
+    if (pos < r.start) hi = mid - 1;
+    else if (pos >= r.end) lo = mid + 1;
+    else return mid;
+  }
+  if (lo <= 0) return 0;
+  return Math.max(0, Math.min(lo - 1, wordRanges.length - 1));
+}
+
+function updateWordHighlight(offset, force=false) {
+  if (!$('followWord').checked || !wordRanges.length) {
+    $('wordTracker').classList.add('d-none');
+    return;
+  }
+  $('wordTracker').classList.remove('d-none');
+  const next = wordIndexForOffset(offset);
+  if (!force && next === activeWordIndex) return;
+  activeWordIndex = next;
+  const start = Math.max(0, next - WORD_CONTEXT_BEFORE);
+  const end = Math.min(wordRanges.length, next + WORD_CONTEXT_AFTER + 1);
+  const before = start > 0 ? '<span class="tracker-ellipsis">...</span>' : '';
+  const after = end < wordRanges.length ? '<span class="tracker-ellipsis">...</span>' : '';
+  const body = wordRanges.slice(start, end).map((r, i) => {
+    const idx = start + i;
+    const active = idx === next ? ' active' : '';
+    return `<span class="word-piece${active}">${escapeHtml(r.text)}</span>`;
+  }).join(' ');
+  $('wordTracker').innerHTML = `${before}${body}${after}`;
+}
+
 async function loadBook(id) {
   currentBook = id;
   bookMeta = await api(`/api/books/${id}`);
@@ -459,27 +555,50 @@ async function loadSegment(c, s, offset=null) {
   setParams(data.params);
   if ($('profiles').options.length) $('profiles').value = profileName || DEFAULT_PROFILE_NAME;
   $('charOffset').value = offset === null ? (data.char_offset || 0) : offset;
+  renderWordTracker();
   renderPlayer();
   await saveState(false, $('charOffset').value);
 }
 
 function renderPlayer() {
+  stopTicker();
   $('player').innerHTML = '';
   cw = new jscw({ wpm:+$('wpm').value, freq:+$('freq').value });
   apply();
   cw.setText(sliceFrom($('charOffset').value));
   cw.renderPlayer('player', cw);
-  cw.onPlay = tick;
-  cw.onFinished = tick;
+  cw.onPlay = startTicker;
+  cw.onFinished = () => { tick(); stopTicker(); };
   tick();
 }
 
+function startTicker() {
+  stopTicker();
+  lastTickerTime = -1;
+  staleTickerFrames = 0;
+  const loop = () => {
+    const keepGoing = tick();
+    tickFrame = keepGoing ? requestAnimationFrame(loop) : null;
+  };
+  tickFrame = requestAnimationFrame(loop);
+}
+
+function stopTicker() {
+  if (tickFrame !== null) cancelAnimationFrame(tickFrame);
+  tickFrame = null;
+}
+
 function offsetFromTime(elapsed) {
+  const audioLen = cw && cw.getLength ? Math.max(cw.getLength(), 0) : 0;
   if (!timing || !timing.marks || timing.marks.length === 0) {
-    const len = cw && cw.getLength ? Math.max(cw.getLength(), 1) : 1;
+    const len = Math.max(audioLen, 1);
     return clampOffset(lastStartedAt + Math.floor((elapsed / len) * currentText.slice(lastStartedAt).length));
   }
-  const target = (timing.marks.find(m => m.i >= lastStartedAt)?.start || 0) + elapsed;
+  const startMark = timing.marks.find(m => m.i >= lastStartedAt);
+  const startTime = startMark ? startMark.start : 0;
+  const timingRemaining = Math.max((timing.duration || 0) - startTime, 0);
+  const scaledElapsed = audioLen > 0 && timingRemaining > 0 ? elapsed * (timingRemaining / audioLen) : elapsed;
+  const target = startTime + scaledElapsed;
   let best = lastStartedAt;
   for (const m of timing.marks) {
     if (m.start <= target) best = m.i; else break;
@@ -488,12 +607,19 @@ function offsetFromTime(elapsed) {
 }
 
 function tick() {
-  if (!cw) return;
+  if (!cw) return false;
   const t = cw.getTime ? cw.getTime() : 0;
   const len = cw.getLength ? cw.getLength() : (timing ? timing.duration : 0);
   const approxChar = offsetFromTime(t);
   $('timeInfo').textContent = `Position ${t.toFixed(1)}s / ${len.toFixed(1)}s · char ≈ ${approxChar}/${currentText.length}`;
-  if (cw.getRemaining && cw.getRemaining() > 0) requestAnimationFrame(tick);
+  updateWordHighlight(approxChar);
+  if (t === lastTickerTime) staleTickerFrames += 1;
+  else staleTickerFrames = 0;
+  lastTickerTime = t;
+  const remaining = cw.getRemaining ? cw.getRemaining() : null;
+  if (remaining !== null && remaining > 0) return true;
+  if (len > 0 && t > 0 && t < len) return true;
+  return staleTickerFrames < 120 && t === 0;
 }
 
 async function saveState(saveParams=true, offset=null) {
@@ -556,9 +682,10 @@ $('segment').onchange = () => loadSegment(chapter, +$('segment').value, 0);
 $('prevSeg').onclick = () => jump(-1);
 $('nextSeg').onclick = () => jump(1);
 $('saveParams').onclick = async () => { await saveState(true, $('charOffset').value); renderPlayer(); };
-$('playFromHere').onclick = async () => { apply(); cw.play(sliceFrom($('charOffset').value)); await saveState(false, $('charOffset').value); };
+$('playFromHere').onclick = async () => { apply(); cw.play(sliceFrom($('charOffset').value)); startTicker(); await saveState(false, $('charOffset').value); };
 $('bookmark').onclick = async () => { const t = cw && cw.getTime ? cw.getTime() : 0; const approx = offsetFromTime(t); $('charOffset').value = approx; await saveState(false, approx); };
 $('resume').onclick = async () => { if (!currentBook) return; const st = await api(`/api/books/${currentBook}/state`); await loadSegment(st.chapter_index, st.segment_index, st.char_offset); };
+$('followWord').onchange = () => updateWordHighlight(+$('charOffset').value || 0, true);
 $('applyProfile').onclick = async () => {
   const profiles = JSON.parse($('profiles').dataset.payload || '[]');
   const found = profiles.find(p => p.name === $('profiles').value);
