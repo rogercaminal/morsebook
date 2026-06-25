@@ -15,6 +15,10 @@ A local Project Gutenberg Morse-code audiobook player.
 - Resume/bookmark support
 - Approximate character timing metadata for better mid-segment resume
 
+## Acknowledgements
+
+Special thanks to Fabian Kurz, DJ5CW, for the original idea behind `ebook2cw` and for developing `jscwlib`, the browser CW playback library used by MorseBook.
+
 ## Run with Docker
 
 ```bash
@@ -210,3 +214,7 @@ Raw Gutenberg TXT files are cached in `data/raw/`.
 ## Notes on timing metadata
 
 The backend estimates Morse timing using PARIS-style dot timing and the current WPM/effective WPM. jscwlib is still the real audio engine; metadata is used for bookmark/resume approximation.
+
+## License
+
+MorseBook is released under the PolyForm Noncommercial License 1.0.0. You can use, copy, modify, and share it freely for non-commercial purposes, as long as the required notices and license terms are retained. Commercial use is not permitted. See [LICENSE](LICENSE).
