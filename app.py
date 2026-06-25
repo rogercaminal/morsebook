@@ -241,7 +241,10 @@ def init_db() -> None:
             """
         )
         defaults = {
-            "Beginner": CWParams(wpm=18, eff=10, freq=600, volume=30, ews=1, real=False),
+            "CWOps Beginner": CWParams(wpm=6, eff=0, freq=600, volume=30, ews=1, real=False),
+            "CWOps Fundamental": CWParams(wpm=10, eff=6, freq=600, volume=30, ews=1, real=False),
+            "CWOps Intermediate": CWParams(wpm=20, eff=15, freq=600, volume=30, ews=1, real=False),
+            "CWOps Advanced": CWParams(wpm=25, eff=0, freq=600, volume=30, ews=1, real=False),
             "HSC": CWParams(wpm=25, eff=0, freq=600, volume=30, ews=0, real=False),
             "VHSC": CWParams(wpm=40, eff=0, freq=600, volume=30, ews=0, real=False),
             "SHSC": CWParams(wpm=50, eff=0, freq=600, volume=30, ews=0, real=False),
