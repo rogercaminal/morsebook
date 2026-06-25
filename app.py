@@ -400,15 +400,8 @@ def profiles() -> list[dict[str, Any]]:
     with db() as conn:
         rows = conn.execute("""
             SELECT * FROM cw_profiles
-            ORDER BY CASE name
-              WHEN ? THEN 1
-              WHEN 'Beginner' THEN 2
-              WHEN 'HSC' THEN 3
-              WHEN 'SHSC' THEN 4
-              WHEN 'EHSC' THEN 5
-              ELSE 6
-            END, name
-        """, (DEFAULT_PROFILE_NAME,)).fetchall()
+            ORDER BY wpm, eff, name
+        """).fetchall()
         return [{"name": r["name"], "params": row_params(r)} for r in rows]
 
 
