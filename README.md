@@ -101,6 +101,88 @@ The splitter treats this as a soft target. It may merge short headings or tiny w
 - `1342`: Pride and Prejudice
 - `84`: Frankenstein
 
+## Testing the API with Postman
+
+Start the app first, then set a Postman collection variable:
+
+- `baseUrl`: `http://127.0.0.1:8000`
+
+For Docker on another machine, use that host instead, for example `http://raspberrypi.local:8000`.
+
+Useful requests:
+
+```text
+GET {{baseUrl}}/api/gutenberg/1342
+GET {{baseUrl}}/api/books
+GET {{baseUrl}}/api/profiles
+GET {{baseUrl}}/api/books/1
+GET {{baseUrl}}/api/books/1/segment/0/0
+GET {{baseUrl}}/api/books/1/state
+```
+
+Import or rebuild a book:
+
+```text
+POST {{baseUrl}}/api/import
+Content-Type: application/json
+```
+
+```json
+{
+  "gutenberg_id": 1342,
+  "target_segment_seconds": 90,
+  "wpm_for_split": 40,
+  "force_refresh": false
+}
+```
+
+Save a CW profile:
+
+```text
+POST {{baseUrl}}/api/profiles
+Content-Type: application/json
+```
+
+```json
+{
+  "name": "My profile",
+  "params": {
+    "wpm": 35,
+    "eff": 0,
+    "freq": 600,
+    "volume": 30,
+    "ews": 0,
+    "real": false
+  }
+}
+```
+
+Update playback state:
+
+```text
+PATCH {{baseUrl}}/api/books/1/state
+Content-Type: application/json
+```
+
+```json
+{
+  "chapter_index": 0,
+  "segment_index": 2,
+  "char_offset": 0,
+  "params": {
+    "wpm": 40,
+    "eff": 0,
+    "freq": 600,
+    "volume": 30,
+    "ews": 0,
+    "real": false
+  },
+  "profile_name": "VHSC"
+}
+```
+
+FastAPI also exposes interactive API docs at <http://127.0.0.1:8000/docs>, which is useful for checking request and response schemas before recreating calls in Postman.
+
 ## Tests
 
 Install dependencies, then run pytest:
