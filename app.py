@@ -1,3 +1,10 @@
+"""FastAPI backend for the MorseBook audiobook player.
+
+This module downloads Project Gutenberg books, normalizes and segments their
+text, persists playback state in SQLite, and exposes API endpoints consumed by
+the browser UI.
+"""
+
 from __future__ import annotations
 
 import re
@@ -26,6 +33,22 @@ app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 
 
 class ImportRequest(BaseModel):
+    """Request body for importing or rebuilding a Gutenberg book.
+
+    Attributes
+    ----------
+    gutenberg_id
+        Positive Project Gutenberg ebook identifier.
+    target_segment_seconds
+        Desired approximate duration of each generated segment.
+    wpm_for_split
+        Words-per-minute value used to estimate segment character length.
+    title
+        Optional title override. If omitted, Gutenberg metadata is used.
+    force_refresh
+        Whether to bypass the local raw TXT cache.
+    """
+
     gutenberg_id: int = Field(..., ge=1)
     target_segment_seconds: int = Field(default=90, ge=30, le=600)
     wpm_for_split: int = Field(default=60, ge=5, le=80)
@@ -34,6 +57,24 @@ class ImportRequest(BaseModel):
 
 
 class GutenbergLookup(BaseModel):
+    """Metadata returned for a Project Gutenberg ebook lookup.
+
+    Attributes
+    ----------
+    gutenberg_id
+        Project Gutenberg ebook identifier.
+    title
+        Human-readable book title.
+    authors
+        Author names in display order.
+    languages
+        Language codes or labels provided by Gutenberg metadata.
+    url
+        Public Project Gutenberg book page.
+    source
+        Metadata or TXT source used for the lookup.
+    """
+
     gutenberg_id: int
     title: str
     authors: list[str] = []
@@ -43,6 +84,24 @@ class GutenbergLookup(BaseModel):
 
 
 class CWParams(BaseModel):
+    """CW playback parameters used by jscwlib and timing estimates.
+
+    Attributes
+    ----------
+    wpm
+        Code speed in words per minute.
+    eff
+        Effective Farnsworth speed. ``0`` means use real speed.
+    freq
+        Tone frequency in hertz.
+    volume
+        Playback volume percentage.
+    ews
+        Extra word spacing units.
+    real
+        Whether to force real-speed playback.
+    """
+
     wpm: int = Field(default=40, ge=5, le=80)
     eff: int = Field(default=0, ge=0, le=80)
     freq: int = Field(default=600, ge=200, le=1200)
@@ -55,11 +114,37 @@ DEFAULT_PROFILE_NAME = "VHSC"
 
 
 class ProfileIn(BaseModel):
+    """Request body for creating or updating a CW profile.
+
+    Attributes
+    ----------
+    name
+        Profile name stored as the SQLite primary key.
+    params
+        CW playback parameters associated with the profile.
+    """
+
     name: str = Field(..., min_length=1, max_length=50)
     params: CWParams
 
 
 class StateUpdate(BaseModel):
+    """Partial playback-state update for a book.
+
+    Attributes
+    ----------
+    chapter_index
+        Optional zero-based chapter index.
+    segment_index
+        Optional zero-based segment index within the chapter.
+    char_offset
+        Optional character offset within the segment text.
+    params
+        Optional per-segment CW parameter override.
+    profile_name
+        Optional profile name associated with ``params``.
+    """
+
     chapter_index: int | None = Field(default=None, ge=0)
     segment_index: int | None = Field(default=None, ge=0)
     char_offset: int | None = Field(default=None, ge=0)
@@ -69,6 +154,14 @@ class StateUpdate(BaseModel):
 
 @contextmanager
 def db():
+    """Open a SQLite connection with row mapping and foreign keys enabled.
+
+    Yields
+    ------
+    sqlite3.Connection
+        Connection committed on successful context exit and closed always.
+    """
+
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -80,6 +173,12 @@ def db():
 
 
 def init_db() -> None:
+    """Create database tables and seed built-in CW profiles.
+
+    Existing built-in profile rows are refreshed so deployments pick up changed
+    defaults, while user-created profiles remain untouched.
+    """
+
     with db() as conn:
         conn.executescript(
             """
@@ -142,9 +241,9 @@ def init_db() -> None:
             """
         )
         defaults = {
-            "VHSC": CWParams(wpm=40, eff=0, freq=600, volume=30, ews=0, real=False),
             "Beginner": CWParams(wpm=18, eff=10, freq=600, volume=30, ews=1, real=False),
             "HSC": CWParams(wpm=25, eff=0, freq=600, volume=30, ews=0, real=False),
+            "VHSC": CWParams(wpm=40, eff=0, freq=600, volume=30, ews=0, real=False),
             "SHSC": CWParams(wpm=50, eff=0, freq=600, volume=30, ews=0, real=False),
             "EHSC": CWParams(wpm=60, eff=0, freq=600, volume=30, ews=0, real=False),
         }
@@ -168,6 +267,20 @@ init_db()
 
 
 def row_params(row: sqlite3.Row | None) -> dict[str, Any]:
+    """Convert a SQLite row into a CW parameter dictionary.
+
+    Parameters
+    ----------
+    row
+        Row from ``segment_params`` or ``cw_profiles``. If ``None``, default
+        ``CWParams`` values are returned.
+
+    Returns
+    -------
+    dict[str, Any]
+        JSON-serializable CW parameter mapping.
+    """
+
     if not row:
         return CWParams().model_dump()
     return {
@@ -177,6 +290,20 @@ def row_params(row: sqlite3.Row | None) -> dict[str, Any]:
 
 
 def normalize_gutenberg_text(raw: str) -> tuple[str, dict[str, str]]:
+    """Strip Gutenberg boilerplate and extract simple header metadata.
+
+    Parameters
+    ----------
+    raw
+        Raw Project Gutenberg TXT content.
+
+    Returns
+    -------
+    tuple[str, dict[str, str]]
+        Normalized book text and available metadata keys such as ``title``,
+        ``author``, and ``language``.
+    """
+
     raw = raw.replace("\r\n", "\n").replace("\r", "\n").replace("\ufeff", "")
     meta: dict[str, str] = {}
     sample = raw[:9000]
@@ -197,6 +324,20 @@ def normalize_gutenberg_text(raw: str) -> tuple[str, dict[str, str]]:
 
 
 def chapterize(text: str) -> list[tuple[str, str]]:
+    """Split normalized book text into chapter-like sections.
+
+    Parameters
+    ----------
+    text
+        Normalized book text without Gutenberg header/footer boilerplate.
+
+    Returns
+    -------
+    list[tuple[str, str]]
+        ``(chapter_title, chapter_text)`` pairs. A single ``Book`` section is
+        returned when no chapter headings are detected.
+    """
+
     pattern = re.compile(r"(?m)^(CHAPTER\s+(?:[IVXLCDM]+|\d+|[A-Z]+)\b[^\n]*)$", re.I)
     matches = list(pattern.finditer(text))
     if not matches:
@@ -215,10 +356,41 @@ def chapterize(text: str) -> list[tuple[str, str]]:
 
 
 def chars_for_seconds(seconds: int, wpm: int) -> int:
+    """Estimate how many text characters fit in a target duration.
+
+    Parameters
+    ----------
+    seconds
+        Desired segment duration in seconds.
+    wpm
+        Words per minute used for the split estimate.
+
+    Returns
+    -------
+    int
+        Character target using the common five-characters-per-word estimate.
+    """
+
     return max(1, int(seconds * wpm * 5 / 60))
 
 
 def split_segments(text: str, max_chars: int) -> list[str]:
+    """Split text into soft-bounded playback segments.
+
+    Parameters
+    ----------
+    text
+        Chapter or section text to split.
+    max_chars
+        Preferred maximum character count for each segment.
+
+    Returns
+    -------
+    list[str]
+        Segment texts. Tiny headings and wrap remainders are merged with
+        neighboring segments when doing so stays within a bounded overflow.
+    """
+
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     min_chars = max(40, int(max_chars * 0.45))
     hard_max = max(max_chars, int(max_chars * 1.35))
@@ -261,6 +433,19 @@ def split_segments(text: str, max_chars: int) -> list[str]:
 
 
 def display_author_name(name: str) -> str:
+    """Convert Gutenberg author names into display order when possible.
+
+    Parameters
+    ----------
+    name
+        Author name, often in ``Last, First`` RDF form.
+
+    Returns
+    -------
+    str
+        Display-oriented author name.
+    """
+
     parts = [p.strip() for p in name.split(",", 1)]
     if len(parts) == 2 and all(parts):
         return f"{parts[1]} {parts[0]}"
@@ -268,6 +453,26 @@ def display_author_name(name: str) -> str:
 
 
 async def fetch_gutenberg_txt(gid: int, force_refresh: bool = False) -> tuple[str, str]:
+    """Fetch and cache the TXT source for a Project Gutenberg ebook.
+
+    Parameters
+    ----------
+    gid
+        Project Gutenberg ebook identifier.
+    force_refresh
+        Whether to bypass an existing cached TXT file.
+
+    Returns
+    -------
+    tuple[str, str]
+        Raw TXT content and the cache/source label.
+
+    Raises
+    ------
+    HTTPException
+        Raised with status 502 if no candidate TXT URL can be fetched.
+    """
+
     cached = RAW_DIR / f"gutenberg_{gid}.txt"
     if cached.exists() and not force_refresh:
         return cached.read_text(encoding="utf-8"), f"cache:gutenberg_{gid}.txt"
@@ -291,6 +496,25 @@ async def fetch_gutenberg_txt(gid: int, force_refresh: bool = False) -> tuple[st
 
 
 async def fetch_gutenberg_metadata(gid: int) -> GutenbergLookup:
+    """Fetch title metadata for a Project Gutenberg ebook.
+
+    Parameters
+    ----------
+    gid
+        Project Gutenberg ebook identifier.
+
+    Returns
+    -------
+    GutenbergLookup
+        Metadata from Gutenberg RDF when available, with TXT-header fallback.
+
+    Raises
+    ------
+    HTTPException
+        Raised with status 404 when neither RDF nor TXT metadata contains a
+        title.
+    """
+
     rdf_url = f"https://www.gutenberg.org/cache/epub/{gid}/pg{gid}.rdf"
     book_url = f"https://www.gutenberg.org/ebooks/{gid}"
     ns = {
@@ -351,7 +575,24 @@ MORSE_UNITS = {
 
 
 def timing_metadata(text: str, p: CWParams, max_marks: int = 2000) -> dict[str, Any]:
-    # Approximate PARIS timing. Good for resume/bookmarks; jscw remains the audio source of truth.
+    """Estimate Morse timing marks for browser-side position tracking.
+
+    Parameters
+    ----------
+    text
+        Segment text to time.
+    p
+        CW playback parameters.
+    max_marks
+        Maximum number of per-character timing marks to include.
+
+    Returns
+    -------
+    dict[str, Any]
+        Duration, timing marks, and truncation flag. Timing is approximate;
+        jscwlib remains the audio source of truth.
+    """
+
     code_wpm = max(1, p.wpm)
     eff_wpm = p.eff if p.eff and p.eff > 0 else p.wpm
     dot = 1.2 / code_wpm
@@ -384,6 +625,26 @@ def timing_metadata(text: str, p: CWParams, max_marks: int = 2000) -> dict[str, 
 
 
 def book_or_404(conn, book_id: int) -> sqlite3.Row:
+    """Fetch a book row or raise a 404 API error.
+
+    Parameters
+    ----------
+    conn
+        Open SQLite connection.
+    book_id
+        Internal database book identifier.
+
+    Returns
+    -------
+    sqlite3.Row
+        Matching book row.
+
+    Raises
+    ------
+    HTTPException
+        Raised with status 404 if the book does not exist.
+    """
+
     row = conn.execute("SELECT * FROM books WHERE id=?", (book_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Book not found")
@@ -392,11 +653,27 @@ def book_or_404(conn, book_id: int) -> sqlite3.Row:
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
+    """Return the single-page browser application.
+
+    Returns
+    -------
+    str
+        HTML page content.
+    """
+
     return (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
 
 
 @app.get("/api/profiles")
 def profiles() -> list[dict[str, Any]]:
+    """List CW profiles ordered by speed.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Profile names and CW parameters sorted by WPM, effective WPM, and name.
+    """
+
     with db() as conn:
         rows = conn.execute("""
             SELECT * FROM cw_profiles
@@ -407,6 +684,19 @@ def profiles() -> list[dict[str, Any]]:
 
 @app.post("/api/profiles")
 def upsert_profile(profile: ProfileIn) -> dict[str, Any]:
+    """Create or replace a CW profile.
+
+    Parameters
+    ----------
+    profile
+        Profile payload containing name and CW parameters.
+
+    Returns
+    -------
+    dict[str, Any]
+        Stored profile name and parameter payload.
+    """
+
     p = profile.params
     with db() as conn:
         conn.execute("REPLACE INTO cw_profiles VALUES (?, ?, ?, ?, ?, ?, ?)", (profile.name, p.wpm, p.eff, p.freq, p.volume, p.ews, int(p.real)))
@@ -415,6 +705,19 @@ def upsert_profile(profile: ProfileIn) -> dict[str, Any]:
 
 @app.get("/api/gutenberg/{gutenberg_id}")
 async def get_gutenberg_metadata(gutenberg_id: int) -> GutenbergLookup:
+    """API endpoint for Project Gutenberg title lookup.
+
+    Parameters
+    ----------
+    gutenberg_id
+        Positive Project Gutenberg ebook identifier.
+
+    Returns
+    -------
+    GutenbergLookup
+        Book metadata suitable for previewing an import.
+    """
+
     if gutenberg_id < 1:
         raise HTTPException(422, "Gutenberg ID must be a positive integer")
     return await fetch_gutenberg_metadata(gutenberg_id)
@@ -422,6 +725,14 @@ async def get_gutenberg_metadata(gutenberg_id: int) -> GutenbergLookup:
 
 @app.get("/api/books")
 def list_books() -> list[dict[str, Any]]:
+    """List imported books with chapter and segment counts.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Imported book rows enriched with aggregate counts.
+    """
+
     with db() as conn:
         rows = conn.execute("""
             SELECT b.*, COUNT(DISTINCT c.id) chapters, COUNT(s.id) segments
@@ -435,6 +746,19 @@ def list_books() -> list[dict[str, Any]]:
 
 @app.post("/api/import")
 async def import_book(req: ImportRequest) -> dict[str, Any]:
+    """Import or rebuild a Project Gutenberg book.
+
+    Parameters
+    ----------
+    req
+        Import options including Gutenberg ID, split target, and cache policy.
+
+    Returns
+    -------
+    dict[str, Any]
+        Imported book metadata and generated chapter/segment counts.
+    """
+
     raw, source = await fetch_gutenberg_txt(req.gutenberg_id, req.force_refresh)
     text, meta = normalize_gutenberg_text(raw)
     title = req.title or meta.get("title") or f"Gutenberg {req.gutenberg_id}"
@@ -463,6 +787,19 @@ async def import_book(req: ImportRequest) -> dict[str, Any]:
 
 @app.get("/api/books/{book_id}")
 def get_book(book_id: int) -> dict[str, Any]:
+    """Fetch book details, chapter summaries, and saved progress.
+
+    Parameters
+    ----------
+    book_id
+        Internal database book identifier.
+
+    Returns
+    -------
+    dict[str, Any]
+        Book row plus chapter list and progress state.
+    """
+
     with db() as conn:
         b = book_or_404(conn, book_id)
         chapters = conn.execute("""
@@ -476,6 +813,24 @@ def get_book(book_id: int) -> dict[str, Any]:
 
 @app.get("/api/books/{book_id}/segment/{chapter_index}/{segment_index}")
 def get_segment(book_id: int, chapter_index: int, segment_index: int) -> dict[str, Any]:
+    """Fetch a segment and its playback metadata.
+
+    Parameters
+    ----------
+    book_id
+        Internal database book identifier.
+    chapter_index
+        Zero-based chapter index.
+    segment_index
+        Zero-based segment index within the chapter.
+
+    Returns
+    -------
+    dict[str, Any]
+        Segment text, saved/default CW parameters, progress offset, and timing
+        metadata.
+    """
+
     with db() as conn:
         book_or_404(conn, book_id)
         seg = conn.execute("SELECT s.*, c.title chapter_title FROM segments s JOIN chapters c ON c.id=s.chapter_id WHERE s.book_id=? AND s.chapter_index=? AND s.segment_index=?", (book_id, chapter_index, segment_index)).fetchone()
@@ -507,6 +862,21 @@ def get_segment(book_id: int, chapter_index: int, segment_index: int) -> dict[st
 
 @app.patch("/api/books/{book_id}/state")
 def patch_state(book_id: int, update: StateUpdate) -> dict[str, Any]:
+    """Update playback progress and optional per-segment CW parameters.
+
+    Parameters
+    ----------
+    book_id
+        Internal database book identifier.
+    update
+        Partial state update.
+
+    Returns
+    -------
+    dict[str, Any]
+        Saved progress row.
+    """
+
     with db() as conn:
         book_or_404(conn, book_id)
         old = conn.execute("SELECT * FROM progress WHERE book_id=?", (book_id,)).fetchone()
@@ -526,6 +896,19 @@ def patch_state(book_id: int, update: StateUpdate) -> dict[str, Any]:
 
 @app.get("/api/books/{book_id}/state")
 def get_state(book_id: int) -> dict[str, Any]:
+    """Fetch or initialize playback progress for a book.
+
+    Parameters
+    ----------
+    book_id
+        Internal database book identifier.
+
+    Returns
+    -------
+    dict[str, Any]
+        Progress row for the book.
+    """
+
     with db() as conn:
         book_or_404(conn, book_id)
         row = conn.execute("SELECT * FROM progress WHERE book_id=?", (book_id,)).fetchone()

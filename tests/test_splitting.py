@@ -1,13 +1,23 @@
+"""Tests for import segment sizing and soft split balancing.
+
+These tests protect the split behavior used when importing Project Gutenberg
+texts into MorseBook playback segments.
+"""
+
 import app
 
 
 def test_chars_for_seconds_uses_requested_wpm_without_large_floor():
+    """Character targets should follow the requested seconds and WPM."""
+
     assert app.chars_for_seconds(90, 18) == 135
     assert app.chars_for_seconds(90, 40) == 300
     assert app.chars_for_seconds(180, 40) == 600
 
 
 def test_split_segments_merges_short_heading_with_following_text():
+    """Short headings should be merged with following prose."""
+
     text = "\n\n".join(
         [
             "Down the Rabbit-Hole",
@@ -25,6 +35,8 @@ def test_split_segments_merges_short_heading_with_following_text():
 
 
 def test_split_segments_merges_tiny_wrap_remainders():
+    """Tiny wrap remainders should not become standalone segments."""
+
     text = (
         "Alice was beginning to get very tired of sitting by her sister on the bank, "
         "and of having nothing to do: once or twice she had peeped into the book her "
@@ -43,6 +55,8 @@ def test_split_segments_merges_tiny_wrap_remainders():
 
 
 def test_split_segments_keeps_oversized_merge_bounded():
+    """Soft merging should stay within the configured hard overflow bound."""
+
     text = "\n\n".join(
         [
             "Brief note.",
