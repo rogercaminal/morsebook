@@ -19,6 +19,8 @@ A local Project Gutenberg Morse-code audiobook player.
 
 Special thanks to Fabian Kurz, DJ5CW, for the original idea behind `ebook2cw` and for developing `jscwlib`, the browser CW playback library used by MorseBook.
 
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for upstream project links and license notes.
+
 ## Run with Docker
 
 ```bash
@@ -217,4 +219,6 @@ The backend estimates Morse timing using PARIS-style dot timing and the current 
 
 ## License
 
-MorseBook is released under the PolyForm Noncommercial License 1.0.0. You can use, copy, modify, and share it freely for non-commercial purposes, as long as the required notices and license terms are retained. Commercial use is not permitted. See [LICENSE](LICENSE).
+MorseBook is by Roger Caminal, EA3M, and is released under the PolyForm Noncommercial License 1.0.0. You can use, copy, modify, and share it freely for non-commercial purposes, as long as the required notices and license terms are retained. Commercial use is not permitted. See [LICENSE](LICENSE).
+
+Third-party components and inspirations have their own notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
